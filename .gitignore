@@ -1,3 +1,23 @@
+# Local .terraform directories
+.terraform/
+
+# Terraform state files
+*.tfstate
+*.tfstate.backup
+
+# Crash logs
+crash.log
+
+# Plan files
+*.tfplan
+
+# Sensitive variable files
+*.tfvars
+
+# Terraform CLI directory
+terraform.tfstate.d/
+
+*.tfstate
 *.tfstate.backup
 .terraform/
 terraform.tfstate.d/
