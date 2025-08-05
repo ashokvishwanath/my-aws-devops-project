@@ -1,23 +1,6 @@
-# Terraform provider plugins directory
+*.tfstate.backup
 .terraform/
-
-# Local Terraform state files
-terraform.tfstate
-terraform.tfstate.*
-
-# Terraform plan files
-terraform.tfplan
-
-# Crash logs
+terraform.tfstate.d/
 crash.log
-
-# Sensitive variable files
 *.tfvars
-*.tfvars.json
-
-# Backup files
-*.backup
-
-# CLI configuration files
-.terraformrc
-terraform.rc
+*.tfplan
