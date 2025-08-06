@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-workload
+  namespace: default
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: sample-workload
+  template:
+    metadata:
+      labels:
+        app: sample-workload
+    spec:
+      # Add node selector to use Karpenter nodes
+      nodeSelector:
+        karpenter.sh/nodepool: default
+      # Tolerate the Karpenter taint
+      tolerations:
+      - key: karpenter.sh/default
+        value: "true"
+        effect: NoSchedule
+      containers:
+      - name: nginx
+        image: nginx:latest
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-workload-service
+  namespace: default
+spec:
+  selector:
+    app: sample-workload
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP

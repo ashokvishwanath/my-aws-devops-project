@@ -8,6 +8,14 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.20"
     }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.10"
+    }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
   }
 
   backend "s3" {
@@ -35,6 +43,21 @@ provider "kubernetes" {
   token                  = data.aws_eks_cluster_auth.default.token
 }
 
+provider "helm" {
+  kubernetes {
+    host                   = module.eks.cluster_endpoint
+    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+    token                  = data.aws_eks_cluster_auth.default.token
+  }
+}
+
+provider "kubectl" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+  token                  = data.aws_eks_cluster_auth.default.token
+  load_config_file       = false
+}
+
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 5.0"
@@ -47,6 +70,15 @@ module "vpc" {
   enable_nat_gateway   = true
   single_nat_gateway   = true
   enable_dns_hostnames = true
+  
+  # Tags for Karpenter discovery
+  private_subnet_tags = {
+    "karpenter.sh/discovery" = var.cluster_name
+  }
+  
+  public_subnet_tags = {
+    "karpenter.sh/discovery" = var.cluster_name
+  }
 }
 
 module "eks" {
@@ -74,7 +106,17 @@ module "eks" {
       max_size       = 5
       desired_size   = 2
       capacity_type  = "ON_DEMAND"
+      
+      # Add Karpenter discovery tags
+      tags = {
+        "karpenter.sh/discovery" = var.cluster_name
+      }
     }
+  }
+  
+  # Add Karpenter discovery tags to the cluster
+  tags = {
+    "karpenter.sh/discovery" = var.cluster_name
   }
 }
 
@@ -106,29 +148,120 @@ module "eks_aws_auth" {
   ]
 }
 
-resource "aws_iam_policy" "cluster_autoscaler" {
-  name        = "EKSClusterAutoscalerPolicy"
-  description = "Policy for EKS Cluster Autoscaler"
-  policy      = file("${path.module}/cluster-autoscaler-policy.json")
-}
+# Karpenter Module for Node Provisioning
+module "karpenter" {
+  source  = "terraform-aws-modules/eks/aws//modules/karpenter"
+  version = "~> 20.0"
 
-resource "aws_iam_role_policy_attachment" "cluster_autoscaler_attach" {
-  role       = module.eks.eks_managed_node_groups["general"].iam_role_name
-  policy_arn = aws_iam_policy.cluster_autoscaler.arn
-}
+  cluster_name = module.eks.cluster_name
 
-data "aws_iam_policy_document" "cluster_autoscaler_policy" {
-  statement {
-    actions = [
-      "autoscaling:DescribeAutoScalingGroups",
-      "autoscaling:DescribeAutoScalingInstances",
-      "autoscaling:DescribeLaunchConfigurations",
-      "autoscaling:DescribeTags",
-      "autoscaling:SetDesiredCapacity",
-      "autoscaling:TerminateInstanceInAutoScalingGroup",
-      "ec2:DescribeLaunchTemplateVersions"
-    ]
+  # Enable IRSA for Karpenter
+  enable_irsa = true
+  irsa_oidc_provider_arn = module.eks.oidc_provider_arn
 
-    resources = ["*"]
+  # Create node instance profile
+  create_node_iam_role = true
+  node_iam_role_additional_policies = {
+    AmazonSSMManagedInstanceCore = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
   }
+
+  # SQS queue for interruption handling
+  queue_name = "${var.cluster_name}-karpenter"
+
+  tags = {
+    Environment = "dev"
+    Terraform   = "true"
+  }
+
+  depends_on = [module.eks]
+}
+
+# Install Karpenter using Helm
+resource "helm_release" "karpenter" {
+  namespace        = "kube-system"
+  name             = "karpenter"
+  repository       = "oci://public.ecr.aws/karpenter"
+  chart            = "karpenter"
+  version          = "1.0.1"
+  wait             = true
+  wait_for_jobs    = true
+  timeout          = 300
+
+  values = [
+    <<-EOT
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: ${module.karpenter.iam_role_arn}
+    settings:
+      clusterName: ${module.eks.cluster_name}
+      clusterEndpoint: ${module.eks.cluster_endpoint}
+      interruptionQueue: ${module.karpenter.queue_name}
+    EOT
+  ]
+
+  depends_on = [module.karpenter]
+}
+
+# Karpenter NodePool Configuration
+resource "kubectl_manifest" "karpenter_nodepool" {
+  yaml_body = <<-YAML
+    apiVersion: karpenter.sh/v1beta1
+    kind: NodePool
+    metadata:
+      name: default
+    spec:
+      template:
+        metadata:
+          labels:
+            karpenter.sh/nodepool: default
+        spec:
+          nodeClassRef:
+            apiVersion: karpenter.k8s.aws/v1beta1
+            kind: EC2NodeClass
+            name: default
+          capacity:
+            cpu: 100
+            memory: 100Gi
+          taints:
+            - key: karpenter.sh/default
+              value: "true"
+              effect: NoSchedule
+      disruption:
+        consolidationPolicy: WhenUnderutilized
+        consolidateAfter: 30s
+        expireAfter: 30m
+      limits:
+        cpu: 1000
+        memory: 1000Gi
+  YAML
+
+  depends_on = [helm_release.karpenter]
+}
+
+# Karpenter EC2NodeClass Configuration
+resource "kubectl_manifest" "karpenter_nodeclass" {
+  yaml_body = <<-YAML
+    apiVersion: karpenter.k8s.aws/v1beta1
+    kind: EC2NodeClass
+    metadata:
+      name: default
+    spec:
+      instanceStorePolicy: NVME
+      userData: |
+        #!/bin/bash
+        /etc/eks/bootstrap.sh ${module.eks.cluster_name}
+      amiFamily: AL2
+      subnetSelectorTerms:
+        - tags:
+            karpenter.sh/discovery: ${module.eks.cluster_name}
+      securityGroupSelectorTerms:
+        - tags:
+            karpenter.sh/discovery: ${module.eks.cluster_name}
+      instanceProfile: ${module.karpenter.instance_profile_name}
+      tags:
+        karpenter.sh/discovery: ${module.eks.cluster_name}
+        Name: "Karpenter-${module.eks.cluster_name}"
+  YAML
+
+  depends_on = [helm_release.karpenter]
 }
