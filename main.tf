@@ -257,7 +257,7 @@ resource "kubectl_manifest" "karpenter_nodeclass" {
       securityGroupSelectorTerms:
         - tags:
             karpenter.sh/discovery: ${module.eks.cluster_name}
-      instanceProfile: ${module.karpenter.instance_profile_name}
+      role: ${module.karpenter.node_iam_role_name}
       tags:
         karpenter.sh/discovery: ${module.eks.cluster_name}
         Name: "Karpenter-${module.eks.cluster_name}"
