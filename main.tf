@@ -33,7 +33,7 @@ provider "aws" {
 
 # Kubernetes provider configuration using module outputs
 data "aws_eks_cluster_auth" "default" {
-  name = module.eks.cluster_name
+  name       = module.eks.cluster_name
   depends_on = [module.eks]
 }
 
@@ -70,12 +70,12 @@ module "vpc" {
   enable_nat_gateway   = true
   single_nat_gateway   = true
   enable_dns_hostnames = true
-  
+
   # Tags for Karpenter discovery
   private_subnet_tags = {
     "karpenter.sh/discovery" = var.cluster_name
   }
-  
+
   public_subnet_tags = {
     "karpenter.sh/discovery" = var.cluster_name
   }
@@ -93,7 +93,7 @@ module "eks" {
 
   # Enable IAM roles for service accounts
   enable_irsa = true
-  
+
   # Enable cluster creator admin permissions
   enable_cluster_creator_admin_permissions = true
 
@@ -102,18 +102,18 @@ module "eks" {
       instance_types = [
         "t3a.medium"
       ]
-      min_size       = 1
-      max_size       = 5
-      desired_size   = 2
-      capacity_type  = "ON_DEMAND"
-      
+      min_size      = 1
+      max_size      = 5
+      desired_size  = 2
+      capacity_type = "ON_DEMAND"
+
       # Add Karpenter discovery tags
       tags = {
         "karpenter.sh/discovery" = var.cluster_name
       }
     }
   }
-  
+
   # Add Karpenter discovery tags to the cluster
   tags = {
     "karpenter.sh/discovery" = var.cluster_name
@@ -156,7 +156,7 @@ module "karpenter" {
   cluster_name = module.eks.cluster_name
 
   # Enable IRSA for Karpenter
-  enable_irsa = true
+  enable_irsa            = true
   irsa_oidc_provider_arn = module.eks.oidc_provider_arn
 
   # Create node instance profile
@@ -178,14 +178,14 @@ module "karpenter" {
 
 # Install Karpenter using Helm
 resource "helm_release" "karpenter" {
-  namespace        = "kube-system"
-  name             = "karpenter"
-  repository       = "oci://public.ecr.aws/karpenter"
-  chart            = "karpenter"
-  version          = "1.0.1"
-  wait             = true
-  wait_for_jobs    = true
-  timeout          = 300
+  namespace     = "kube-system"
+  name          = "karpenter"
+  repository    = "oci://public.ecr.aws/karpenter"
+  chart         = "karpenter"
+  version       = "1.0.1"
+  wait          = true
+  wait_for_jobs = true
+  timeout       = 300
 
   values = [
     <<-EOT

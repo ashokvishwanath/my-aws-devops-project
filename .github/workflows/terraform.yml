@@ -6,15 +6,17 @@ on:
       action:
         description: 'Terraform Action'
         required: true
-        default: 'apply'
+        default: 'plan'
         type: choice
         options:
+          - plan
           - apply
           - destroy
 
 env:
   TF_VERSION: 1.8.5
   AWS_REGION: us-west-2
+  TF_LOG: INFO
 
 jobs:
   terraform:
@@ -36,16 +38,53 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS credentials
+        run: |
+          echo "Current AWS Identity:"
+          aws sts get-caller-identity
+          echo "AWS Region: ${{ env.AWS_REGION }}"
+
       - name: Terraform Init
-        run: terraform init
+        run: |
+          echo "Initializing Terraform..."
+          terraform init
+          echo "Terraform version:"
+          terraform version
+
+      - name: Terraform Validate
+        run: |
+          echo "Validating Terraform configuration..."
+          terraform validate
+
+      - name: Terraform Format Check
+        run: |
+          echo "Checking Terraform formatting..."
+          terraform fmt -check -diff
+        continue-on-error: true
 
       - name: Terraform Plan
-        run: terraform plan -out=tfplan
+        run: |
+          echo "Running Terraform plan..."
+          terraform plan -detailed-exitcode -out=tfplan
+        continue-on-error: true
+        id: plan
 
-      - name: Terraform Apply or Destroy
-        if: github.event.inputs.action == 'apply'
-        run: terraform apply -auto-approve tfplan
+      - name: Check Plan Exit Code
+        run: |
+          echo "Plan exit code: ${{ steps.plan.outcome }}"
+          if [ "${{ steps.plan.outcome }}" != "success" ]; then
+            echo "Terraform plan failed!"
+            exit 1
+          fi
+
+      - name: Terraform Apply
+        if: github.event.inputs.action == 'apply' && steps.plan.outcome == 'success'
+        run: |
+          echo "Applying Terraform plan..."
+          terraform apply -auto-approve tfplan
 
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
-        run: terraform destroy -auto-approve
+        run: |
+          echo "Destroying Terraform resources..."
+          terraform destroy -auto-approve
