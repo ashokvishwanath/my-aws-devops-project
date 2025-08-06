@@ -42,6 +42,7 @@ module "eks" {
   subnet_ids                    = module.vpc.private_subnets
   vpc_id                        = module.vpc.vpc_id
   cluster_endpoint_public_access = true
+  manage_aws_auth_configmap     = true
 
   eks_managed_node_groups = {
     general = {
@@ -56,6 +57,22 @@ module "eks" {
       capacity_type  = "ON_DEMAND"
     }
   }
+
+  aws_auth_roles = [
+    {
+      rolearn  = aws_iam_role.eks_admin.arn
+      username = "eks-admin"
+      groups   = ["system:masters"]
+    }
+  ]
+
+  aws_auth_users = [
+    {
+      userarn  = "arn:aws:iam::467025088240:user/CI-Admin"
+      username = "ci-admin"
+      groups   = ["system:masters"]
+    }
+  ]
 }
 
 resource "aws_iam_policy" "cluster_autoscaler" {
