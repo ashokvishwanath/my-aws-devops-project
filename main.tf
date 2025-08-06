@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.20"
+    }
   }
 
   backend "s3" {
@@ -17,6 +21,18 @@ terraform {
 
 provider "aws" {
   region = var.region
+}
+
+# Kubernetes provider configuration using module outputs
+data "aws_eks_cluster_auth" "default" {
+  name = module.eks.cluster_name
+  depends_on = [module.eks]
+}
+
+provider "kubernetes" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+  token                  = data.aws_eks_cluster_auth.default.token
 }
 
 module "vpc" {
@@ -37,19 +53,22 @@ module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.0"
 
-  cluster_name                  = var.cluster_name
-  cluster_version               = var.cluster_version
-  subnet_ids                    = module.vpc.private_subnets
-  vpc_id                        = module.vpc.vpc_id
+  cluster_name                   = var.cluster_name
+  cluster_version                = var.cluster_version
+  subnet_ids                     = module.vpc.private_subnets
+  vpc_id                         = module.vpc.vpc_id
   cluster_endpoint_public_access = true
-  manage_aws_auth_configmap     = true
+
+  # Enable IAM roles for service accounts
+  enable_irsa = true
+  
+  # Enable cluster creator admin permissions
+  enable_cluster_creator_admin_permissions = true
 
   eks_managed_node_groups = {
     general = {
       instance_types = [
         "t3a.medium"
-
-        
       ]
       min_size       = 1
       max_size       = 5
@@ -57,13 +76,21 @@ module "eks" {
       capacity_type  = "ON_DEMAND"
     }
   }
+}
+
+# AWS Auth ConfigMap management
+module "eks_aws_auth" {
+  source  = "terraform-aws-modules/eks/aws//modules/aws-auth"
+  version = "~> 20.0"
+
+  manage_aws_auth_configmap = true
 
   aws_auth_roles = [
     {
       rolearn  = aws_iam_role.eks_admin.arn
       username = "eks-admin"
       groups   = ["system:masters"]
-    }
+    },
   ]
 
   aws_auth_users = [
@@ -71,7 +98,11 @@ module "eks" {
       userarn  = "arn:aws:iam::467025088240:user/CI-Admin"
       username = "ci-admin"
       groups   = ["system:masters"]
-    }
+    },
+  ]
+
+  depends_on = [
+    module.eks
   ]
 }
 
