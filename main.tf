@@ -160,7 +160,8 @@ module "karpenter" {
   irsa_oidc_provider_arn = module.eks.oidc_provider_arn
 
   # Create node instance profile
-  create_node_iam_role = true
+  create_node_iam_role      = true
+  create_instance_profile   = true
   node_iam_role_additional_policies = {
     AmazonSSMManagedInstanceCore = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
   }
@@ -257,7 +258,7 @@ resource "kubectl_manifest" "karpenter_nodeclass" {
       securityGroupSelectorTerms:
         - tags:
             karpenter.sh/discovery: ${module.eks.cluster_name}
-      role: ${module.karpenter.node_iam_role_name}
+      instanceProfile: ${module.karpenter.instance_profile_name}
       tags:
         karpenter.sh/discovery: ${module.eks.cluster_name}
         Name: "Karpenter-${module.eks.cluster_name}"
